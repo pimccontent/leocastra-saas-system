@@ -29,6 +29,22 @@ From repo root:
 docker compose --env-file .env.saas-live -f docker-compose.saas-live.yml up -d --build
 ```
 
+## One-command install (Ubuntu)
+
+This installs Docker (if needed), clones the repo to `/opt/leocastra-saas-system`, generates secrets, and starts the stack.
+
+Replace `saas-api.example.com` with your public API hostname (must match your TLS cert later):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/pimccontent/leocastra-saas-system/main/deploy/ubuntu-one-command.sh | sudo bash -s -- --api-domain saas-api.example.com
+```
+
+Optional web hostname hint (for your reverse-proxy planning only):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/pimccontent/leocastra-saas-system/main/deploy/ubuntu-one-command.sh | sudo bash -s -- --api-domain saas-api.example.com --web-domain saas.example.com
+```
+
 ## 3) Verify services
 
 Check backend:
