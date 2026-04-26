@@ -1,0 +1,49 @@
+services:
+  saas-postgres:
+    image: postgres:16-alpine
+    container_name: saas-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${SAAS_DB_NAME}
+      POSTGRES_USER: ${SAAS_DB_USER}
+      POSTGRES_PASSWORD: ${SAAS_DB_PASSWORD}
+    volumes:
+      - saas_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${SAAS_DB_USER} -d ${SAAS_DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  saas-backend:
+    build:
+      context: ./leocastra-saas
+      dockerfile: Dockerfile
+    container_name: saas-backend
+    restart: unless-stopped
+    depends_on:
+      saas-postgres:
+        condition: service_healthy
+    env_file:
+      - ./.env.saas-live
+    environment:
+      DATABASE_URL: postgresql://${SAAS_DB_USER}:${SAAS_DB_PASSWORD}@saas-postgres:5432/${SAAS_DB_NAME}
+      PORT: 3000
+    ports:
+      - "${SAAS_BACKEND_PORT:-3001}:3000"
+
+  saas-web:
+    build:
+      context: ./leocastra-saas-web
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${SAAS_PUBLIC_API_URL}
+    container_name: saas-web
+    restart: unless-stopped
+    depends_on:
+      - saas-backend
+    ports:
+      - "${SAAS_WEB_PORT:-3000}:3000"
+
+volumes:
+  saas_postgres_data:

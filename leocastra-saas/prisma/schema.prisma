@@ -1,0 +1,193 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum LicenseStatus {
+  ACTIVE
+  EXPIRED
+  SUSPENDED
+  REVOKED
+}
+
+enum TransactionStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+  CANCELLED
+}
+
+enum FeatureUnit {
+  per_stream
+  flat
+}
+
+model User {
+  id            String        @id @default(uuid()) @db.Uuid
+  email         String        @unique
+  firstName     String?
+  lastName      String?
+  passwordHash  String
+  ownedOrganizations Organization[] @relation("OrganizationOwner")
+  memberships   Membership[]
+  transactions  Transaction[]
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([createdAt])
+}
+
+model Organization {
+  id             String        @id @default(uuid()) @db.Uuid
+  name           String
+  slug           String        @unique
+  ownerId        String        @db.Uuid
+  owner          User          @relation("OrganizationOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  memberships    Membership[]
+  licenses       License[]
+  transactions   Transaction[]
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@index([ownerId])
+  @@index([createdAt])
+}
+
+model Membership {
+  id              String        @id @default(uuid()) @db.Uuid
+  userId          String        @db.Uuid
+  organizationId  String        @db.Uuid
+  role            Role          @default(MEMBER)
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization    Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@unique([userId, organizationId])
+  @@index([organizationId, role])
+}
+
+model Plan {
+  id             String         @id @default(uuid()) @db.Uuid
+  code           String         @unique
+  name           String
+  description    String?
+  priceCents     Int
+  currency       String         @default("USD")
+  maxStreams     Int
+  billingCycle   String
+  features       Json
+  isActive       Boolean        @default(true)
+  transactions   Transaction[]
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@index([isActive])
+}
+
+model License {
+  id              String         @id @default(uuid()) @db.Uuid
+  organizationId  String         @db.Uuid
+  key             String         @unique
+  seats           Int            @default(1)
+  status          LicenseStatus  @default(ACTIVE)
+  startsAt        DateTime       @default(now())
+  expiresAt       DateTime?
+  organization    Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  items           LicenseItem[]
+  transactions    Transaction[]
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([organizationId, status])
+  @@index([expiresAt])
+}
+
+model Feature {
+  key          String        @id
+  name         String
+  priceCents   Int
+  unit         FeatureUnit
+  active       Boolean       @default(true)
+  items        LicenseItem[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([active])
+}
+
+model LicenseItem {
+  id          String      @id @default(uuid()) @db.Uuid
+  licenseId   String      @db.Uuid
+  featureKey  String
+  quantity    Int         @default(1)
+  license     License     @relation(fields: [licenseId], references: [id], onDelete: Cascade)
+  feature     Feature     @relation(fields: [featureKey], references: [key], onDelete: Restrict)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@unique([licenseId, featureKey])
+  @@index([featureKey])
+}
+
+model PlatformSettings {
+  id                     String   @id @default("default")
+  siteTitle              String?
+  siteDescription        String?
+  siteLogoUrl            String?
+  siteFaviconUrl         String?
+  seoMetaTitle           String?
+  seoMetaDescription     String?
+  seoKeywords            Json?
+  paystackPublicKey      String?
+  paystackSecretKey      String?
+  paystackWebhookSecret  String?
+  binancePayApiKey       String?
+  binancePaySecretKey    String?
+  binancePayMerchantId   String?
+  binancePayWebhookSecret String?
+  billingBaseCurrency    String   @default("USD")
+  exchangeRates          Json?
+  updatedAt              DateTime @updatedAt
+}
+
+model Transaction {
+  id              String             @id @default(uuid()) @db.Uuid
+  organizationId  String             @db.Uuid
+  userId          String             @db.Uuid
+  planId          String?            @db.Uuid
+  licenseId       String?            @db.Uuid
+  provider        String
+  providerRef     String?
+  amountCents     Int
+  currency        String             @default("USD")
+  status          TransactionStatus  @default(PENDING)
+  metadata        Json?
+  organization    Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user            User               @relation(fields: [userId], references: [id], onDelete: Restrict)
+  plan            Plan?              @relation(fields: [planId], references: [id], onDelete: Restrict)
+  license         License?           @relation(fields: [licenseId], references: [id], onDelete: SetNull)
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  @@index([organizationId, createdAt])
+  @@index([userId, createdAt])
+  @@index([planId])
+  @@index([licenseId])
+  @@index([status, createdAt])
+}
