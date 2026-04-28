@@ -156,7 +156,7 @@ write_caddyfile() {
 ${SINGLE_DOMAIN} {
   encode gzip
 
-  handle_path /api/* {
+  handle /api/* {
     reverse_proxy ${api_upstream}
   }
 
