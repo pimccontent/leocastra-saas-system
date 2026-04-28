@@ -4,6 +4,22 @@ set -euo pipefail
 REPO_DEFAULT="https://github.com/pimccontent/leocastra-saas-system.git"
 INSTALL_DIR_DEFAULT="/opt/leocastra-saas-system"
 
+require_root() {
+  if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+    echo "ERROR: run as root (use sudo)." >&2
+    exit 2
+  fi
+}
+
+ubuntu_codename() {
+  local code=""
+  code="$(. /etc/os-release 2>/dev/null && echo "${VERSION_CODENAME:-}")" || true
+  if [[ -z "$code" ]] && command -v lsb_release >/dev/null 2>&1; then
+    code="$(lsb_release -cs 2>/dev/null || true)"
+  fi
+  echo "$code"
+}
+
 usage() {
   cat <<'EOF'
 LeoCastra SaaS licensing system — Ubuntu one-command installer
@@ -12,6 +28,7 @@ Usage:
   curl -fsSL https://raw.githubusercontent.com/pimccontent/leocastra-saas-system/main/deploy/ubuntu-one-command.sh | sudo bash -s -- \
     --api-domain saas-api.example.com \
     [--web-domain saas.example.com] \
+    [--single-domain saas.example.com] \
     [--repo URL] [--dir /opt/leocastra-saas-system] \
     [--superadmin-email you@example.com] [--superadmin-password '...'] \
     [--backend-port 3001] [--web-port 3000]
@@ -19,13 +36,15 @@ Usage:
 Notes:
   - Requires Ubuntu with apt and outbound internet access.
   - Installs Docker Engine + Compose plugin if missing.
+  - Installs and configures Caddy (reverse proxy + automatic HTTPS).
   - Generates strong secrets for DB + JWT if not provided.
-  - Sets SAAS_PUBLIC_API_URL to https://<api-domain>/api (used at Next.js build time).
+  - Sets SAAS_PUBLIC_API_URL to the public HTTPS URL (used at Next.js build time).
 EOF
 }
 
 API_DOMAIN=""
 WEB_DOMAIN=""
+SINGLE_DOMAIN=""
 REPO_URL="$REPO_DEFAULT"
 INSTALL_DIR="$INSTALL_DIR_DEFAULT"
 SUPERADMIN_EMAIL="${SUPERADMIN_EMAIL:-superadmin@leocastra.local}"
@@ -37,6 +56,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --api-domain) API_DOMAIN="${2:-}"; shift 2 ;;
     --web-domain) WEB_DOMAIN="${2:-}"; shift 2 ;;
+    --single-domain) SINGLE_DOMAIN="${2:-}"; shift 2 ;;
     --repo) REPO_URL="${2:-}"; shift 2 ;;
     --dir) INSTALL_DIR="${2:-}"; shift 2 ;;
     --superadmin-email) SUPERADMIN_EMAIL="${2:-}"; shift 2 ;;
@@ -54,22 +74,31 @@ if [[ -z "$API_DOMAIN" ]]; then
   exit 2
 fi
 
-if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
-  echo "ERROR: run as root (use sudo)." >&2
+if [[ -n "$SINGLE_DOMAIN" ]] && [[ -n "$WEB_DOMAIN" ]]; then
+  echo "ERROR: use either --single-domain OR --web-domain, not both." >&2
+  usage
   exit 2
 fi
 
+require_root
+
 export DEBIAN_FRONTEND=noninteractive
 
-if ! command -v docker >/dev/null 2>&1; then
-  apt-get update -y
-  apt-get install -y ca-certificates curl gnupg lsb-release git
+apt-get update -y
+apt-get install -y ca-certificates curl git openssl gnupg lsb-release
 
+if ! command -v docker >/dev/null 2>&1; then
   install -m 0755 -d /etc/apt/keyrings
   curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
   chmod a+r /etc/apt/keyrings/docker.gpg
 
-  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "${VERSION_CODENAME:-}") stable" \
+  UBUNTU_CODENAME="$(ubuntu_codename)"
+  if [[ -z "${UBUNTU_CODENAME}" ]]; then
+    echo "ERROR: could not detect Ubuntu codename (VERSION_CODENAME)." >&2
+    exit 1
+  fi
+
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${UBUNTU_CODENAME} stable" \
     > /etc/apt/sources.list.d/docker.list
 
   apt-get update -y
@@ -82,8 +111,73 @@ if ! docker compose version >/dev/null 2>&1; then
   exit 1
 fi
 
+install_caddy_if_needed() {
+  if command -v caddy >/dev/null 2>&1; then
+    return 0
+  fi
+  apt-get install -y debian-keyring debian-archive-keyring apt-transport-https
+  curl -1sLf "https://dl.cloudsmith.io/public/caddy/stable/gpg.key" | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+  curl -1sLf "https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt" > /etc/apt/sources.list.d/caddy-stable.list
+  apt-get update -y
+  apt-get install -y caddy
+  systemctl enable --now caddy
+}
+
+write_caddyfile() {
+  local api_upstream="127.0.0.1:${BACKEND_PORT}"
+  local web_upstream="127.0.0.1:${WEB_PORT}"
+
+  if [[ -n "$SINGLE_DOMAIN" ]]; then
+    cat >/etc/caddy/Caddyfile <<EOF
+${SINGLE_DOMAIN} {
+  encode gzip
+
+  handle_path /api/* {
+    reverse_proxy ${api_upstream}
+  }
+
+  reverse_proxy ${web_upstream}
+}
+EOF
+    return 0
+  fi
+
+  if [[ -n "$WEB_DOMAIN" ]]; then
+    cat >/etc/caddy/Caddyfile <<EOF
+${API_DOMAIN} {
+  encode gzip
+  reverse_proxy ${api_upstream}
+}
+
+${WEB_DOMAIN} {
+  encode gzip
+  reverse_proxy ${web_upstream}
+}
+EOF
+    return 0
+  fi
+
+  cat >/etc/caddy/Caddyfile <<EOF
+${API_DOMAIN} {
+  encode gzip
+  reverse_proxy ${api_upstream}
+}
+EOF
+}
+
+configure_firewall_if_ufw() {
+  if ! command -v ufw >/dev/null 2>&1; then
+    return 0
+  fi
+  ufw allow 80/tcp >/dev/null 2>&1 || true
+  ufw allow 443/tcp >/dev/null 2>&1 || true
+}
+
 mkdir -p "$(dirname "$INSTALL_DIR")"
-if [[ ! -d "$INSTALL_DIR/.git" ]]; then
+if [[ -d "$INSTALL_DIR/.git" ]]; then
+  git -C "$INSTALL_DIR" fetch --all --prune
+  git -C "$INSTALL_DIR" reset --hard origin/main
+else
   rm -rf "$INSTALL_DIR"
   git clone "$REPO_URL" "$INSTALL_DIR"
 fi
@@ -104,7 +198,16 @@ if [[ ! -f ".env.saas-live" ]]; then
     SUPERADMIN_PASSWORD="$(openssl rand -base64 24 | tr -d '\n' | tr '+/' '-_')"
   fi
 
-  SAAS_PUBLIC_API_URL="https://${API_DOMAIN}/api"
+  if [[ -n "$SINGLE_DOMAIN" ]]; then
+    SAAS_PUBLIC_API_URL="https://${SINGLE_DOMAIN}/api"
+    CORS_ORIGINS="https://${SINGLE_DOMAIN}"
+  elif [[ -n "$WEB_DOMAIN" ]]; then
+    SAAS_PUBLIC_API_URL="https://${API_DOMAIN}/api"
+    CORS_ORIGINS="https://${WEB_DOMAIN}"
+  else
+    SAAS_PUBLIC_API_URL="https://${API_DOMAIN}/api"
+    CORS_ORIGINS=""
+  fi
 
   cat >".env.saas-live" <<EOF
 SAAS_DB_NAME=${SAAS_DB_NAME}
@@ -120,6 +223,8 @@ AUTH_JWT_SECRET=${AUTH_JWT_SECRET}
 SUPERADMIN_EMAIL=${SUPERADMIN_EMAIL}
 SUPERADMIN_PASSWORD=${SUPERADMIN_PASSWORD}
 
+CORS_ORIGINS=${CORS_ORIGINS}
+
 PAYSTACK_WEBHOOK_SECRET=
 BINANCEPAY_WEBHOOK_SECRET=
 EOF
@@ -130,22 +235,32 @@ fi
 
 docker compose --env-file .env.saas-live -f docker-compose.saas-live.yml up -d --build
 
+install_caddy_if_needed
+write_caddyfile
+systemctl reload caddy || systemctl restart caddy
+configure_firewall_if_ufw
+
 echo
 echo "Install complete."
-echo "- Web:  http://127.0.0.1:${WEB_PORT} (bind all interfaces)"
-echo "- API:  http://127.0.0.1:${BACKEND_PORT}/api"
-echo "- Public API URL baked into web build: https://${API_DOMAIN}/api"
+echo "- Web upstream (localhost): http://127.0.0.1:${WEB_PORT}"
+echo "- API upstream (localhost): http://127.0.0.1:${BACKEND_PORT}/api"
+if [[ -n "$SINGLE_DOMAIN" ]]; then
+  echo "- Web (HTTPS): https://${SINGLE_DOMAIN}"
+  echo "- API (HTTPS): https://${SINGLE_DOMAIN}/api"
+  echo "- License validate: https://${SINGLE_DOMAIN}/api/license/validate"
+elif [[ -n "$WEB_DOMAIN" ]]; then
+  echo "- Web (HTTPS): https://${WEB_DOMAIN}"
+  echo "- API (HTTPS): https://${API_DOMAIN}/api"
+  echo "- License validate: https://${API_DOMAIN}/api/license/validate"
+else
+  echo "- API (HTTPS): https://${API_DOMAIN}/api"
+  echo "- License validate: https://${API_DOMAIN}/api/license/validate"
+  echo "- (optional) add --web-domain for a separate web hostname, or --single-domain for one hostname."
+fi
 echo
 echo "Next steps:"
-echo "- Put TLS reverse proxy in front (recommended):"
-echo "  - https://${API_DOMAIN} -> http://127.0.0.1:${BACKEND_PORT}"
-if [[ -n "$WEB_DOMAIN" ]]; then
-  echo "  - https://${WEB_DOMAIN} -> http://127.0.0.1:${WEB_PORT}"
-else
-  echo "  - (optional) https://<your-web-domain> -> http://127.0.0.1:${WEB_PORT}"
-fi
-echo "- Point your live LeoCastra backend LICENSE_VALIDATE_URL to:"
-echo "  https://${API_DOMAIN}/api/license/validate"
+echo "- Ensure Cloudflare DNS is set to DNS-only (no orange proxy) during first TLS issuance, or allow HTTP-01."
+echo "- Point your live LeoCastra backend LICENSE_VALIDATE_URL to the URL above."
 echo
 echo "Superadmin login (from .env.saas-live):"
 echo "- Email: ${SUPERADMIN_EMAIL}"

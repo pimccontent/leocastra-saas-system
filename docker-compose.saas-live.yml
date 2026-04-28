@@ -30,7 +30,7 @@ services:
       DATABASE_URL: postgresql://${SAAS_DB_USER}:${SAAS_DB_PASSWORD}@saas-postgres:5432/${SAAS_DB_NAME}
       PORT: 3000
     ports:
-      - "${SAAS_BACKEND_PORT:-3001}:3000"
+      - "127.0.0.1:${SAAS_BACKEND_PORT:-3001}:3000"
 
   saas-web:
     build:
@@ -43,7 +43,7 @@ services:
     depends_on:
       - saas-backend
     ports:
-      - "${SAAS_WEB_PORT:-3000}:3000"
+      - "127.0.0.1:${SAAS_WEB_PORT:-3000}:3000"
 
 volumes:
   saas_postgres_data:

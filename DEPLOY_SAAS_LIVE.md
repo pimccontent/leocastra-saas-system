@@ -31,7 +31,7 @@ docker compose --env-file .env.saas-live -f docker-compose.saas-live.yml up -d -
 
 ## One-command install (Ubuntu)
 
-This installs Docker (if needed), clones the repo to `/opt/leocastra-saas-system`, generates secrets, and starts the stack.
+This installs Docker (if needed), clones the repo to `/opt/leocastra-saas-system`, generates secrets, starts the stack, and configures **Caddy reverse proxy + automatic HTTPS**.
 
 Replace `saas-api.example.com` with your public API hostname (must match your TLS cert later):
 
@@ -39,10 +39,16 @@ Replace `saas-api.example.com` with your public API hostname (must match your TL
 curl -fsSL https://raw.githubusercontent.com/pimccontent/leocastra-saas-system/main/deploy/ubuntu-one-command.sh | sudo bash -s -- --api-domain saas-api.example.com
 ```
 
-Optional web hostname hint (for your reverse-proxy planning only):
+Optional web hostname:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/pimccontent/leocastra-saas-system/main/deploy/ubuntu-one-command.sh | sudo bash -s -- --api-domain saas-api.example.com --web-domain saas.example.com
+```
+
+Single-domain mode (recommended if you want one hostname):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/pimccontent/leocastra-saas-system/main/deploy/ubuntu-one-command.sh | sudo bash -s -- --api-domain ignored.example.com --single-domain saas.example.com
 ```
 
 ## 3) Verify services
@@ -63,9 +69,15 @@ Login bootstrap account:
 - Email: `SUPERADMIN_EMAIL`
 - Password: `SUPERADMIN_PASSWORD`
 
+Note:
+- The superadmin user is created automatically on first boot when `SUPERADMIN_EMAIL` + `SUPERADMIN_PASSWORD` are set.
+- If you change `SUPERADMIN_PASSWORD` later, the existing user password will not be overwritten automatically. Reset by deleting the DB volume or updating the password in the database.
+
 ## 4) Configure reverse proxy + HTTPS (recommended)
 
-Expose:
+The one-command install configures Caddy for you.
+
+Multi-domain:
 - `https://saas.example.com` -> `http://127.0.0.1:3000`
 - `https://saas-api.example.com` -> `http://127.0.0.1:3001`
 
