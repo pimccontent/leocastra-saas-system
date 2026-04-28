@@ -113,3 +113,16 @@ Stop:
 ```bash
 docker compose --env-file .env.saas-live -f docker-compose.saas-live.yml down
 ```
+
+## Paystack webhook (required to record payments)
+
+The system marks transactions as `SUCCEEDED` only after it receives the Paystack webhook.
+
+- **Webhook URL**: `https://<your-domain>/api/payments/webhook/paystack`
+  - Single-domain example: `https://licapi.unibms.com/api/payments/webhook/paystack`
+- **Webhook signature header**: Paystack sends `x-paystack-signature` (handled automatically).
+
+Set these env vars:
+- `PAYSTACK_SECRET_KEY=sk_live_...`
+- `PAYSTACK_WEBHOOK_SECRET=...` (your Paystack webhook signing secret; commonly your secret key)
+- `PAYSTACK_CALLBACK_URL=https://<your-domain>/payment/callback` (browser redirect after payment)
