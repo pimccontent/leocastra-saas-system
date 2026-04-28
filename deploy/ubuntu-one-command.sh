@@ -29,6 +29,7 @@ Usage:
     --api-domain saas-api.example.com \
     [--web-domain saas.example.com] \
     [--single-domain saas.example.com] \
+    [--no-https] [--caddy-email you@example.com] \
     [--repo URL] [--dir /opt/leocastra-saas-system] \
     [--superadmin-email you@example.com] [--superadmin-password '...'] \
     [--backend-port 3001] [--web-port 3000]
@@ -45,6 +46,8 @@ EOF
 API_DOMAIN=""
 WEB_DOMAIN=""
 SINGLE_DOMAIN=""
+NO_HTTPS="false"
+CADDY_EMAIL="${CADDY_EMAIL:-}"
 REPO_URL="$REPO_DEFAULT"
 INSTALL_DIR="$INSTALL_DIR_DEFAULT"
 SUPERADMIN_EMAIL="${SUPERADMIN_EMAIL:-superadmin@leocastra.local}"
@@ -57,6 +60,8 @@ while [[ $# -gt 0 ]]; do
     --api-domain) API_DOMAIN="${2:-}"; shift 2 ;;
     --web-domain) WEB_DOMAIN="${2:-}"; shift 2 ;;
     --single-domain) SINGLE_DOMAIN="${2:-}"; shift 2 ;;
+    --no-https) NO_HTTPS="true"; shift 1 ;;
+    --caddy-email) CADDY_EMAIL="${2:-}"; shift 2 ;;
     --repo) REPO_URL="${2:-}"; shift 2 ;;
     --dir) INSTALL_DIR="${2:-}"; shift 2 ;;
     --superadmin-email) SUPERADMIN_EMAIL="${2:-}"; shift 2 ;;
@@ -115,12 +120,31 @@ install_caddy_if_needed() {
   if command -v caddy >/dev/null 2>&1; then
     return 0
   fi
+
+  # Install Caddy from the official Cloudsmith repo.
   apt-get install -y debian-keyring debian-archive-keyring apt-transport-https
-  curl -1sLf "https://dl.cloudsmith.io/public/caddy/stable/gpg.key" | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-  curl -1sLf "https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt" > /etc/apt/sources.list.d/caddy-stable.list
+  curl -1sLf "https://dl.cloudsmith.io/public/caddy/stable/gpg.key" \
+    | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+  curl -1sLf "https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt" \
+    > /etc/apt/sources.list.d/caddy-stable.list
+
   apt-get update -y
   apt-get install -y caddy
-  systemctl enable --now caddy
+
+  if ! command -v caddy >/dev/null 2>&1; then
+    echo "ERROR: Caddy install did not provide the 'caddy' binary." >&2
+    echo "Hints:" >&2
+    echo "- Check outbound connectivity to dl.cloudsmith.io" >&2
+    echo "- If you are behind restrictive egress, rerun with --no-https" >&2
+    exit 1
+  fi
+
+  systemctl enable --now caddy || true
+  if ! systemctl list-unit-files | grep -q '^caddy\.service'; then
+    echo "ERROR: caddy.service was not installed (systemd unit missing)." >&2
+    echo "Rerun with --no-https to skip HTTPS, or install Caddy manually." >&2
+    exit 1
+  fi
 }
 
 write_caddyfile() {
@@ -235,10 +259,19 @@ fi
 
 docker compose --env-file .env.saas-live -f docker-compose.saas-live.yml up -d --build
 
-install_caddy_if_needed
-write_caddyfile
-systemctl reload caddy || systemctl restart caddy
-configure_firewall_if_ufw
+if [[ "${NO_HTTPS}" != "true" ]]; then
+  install_caddy_if_needed
+  write_caddyfile
+  if [[ -n "${CADDY_EMAIL}" ]]; then
+    mkdir -p /etc/caddy
+    if ! grep -q '^{' /etc/caddy/Caddyfile 2>/dev/null; then
+      printf "{\n  email %s\n}\n\n" "${CADDY_EMAIL}" | cat - /etc/caddy/Caddyfile > /etc/caddy/Caddyfile.tmp
+      mv /etc/caddy/Caddyfile.tmp /etc/caddy/Caddyfile
+    fi
+  fi
+  systemctl reload caddy || systemctl restart caddy
+  configure_firewall_if_ufw
+fi
 
 echo
 echo "Install complete."
