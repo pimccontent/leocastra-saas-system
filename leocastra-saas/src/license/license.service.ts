@@ -265,6 +265,21 @@ export class LicenseService {
     const valid = !(isExpired || isSuspended || isRevoked || isStatusExpired);
     const features = this.toFeaturePayload(license.items);
 
+    // Track activation/validation for owner reporting.
+    // - activatedAt: first time a *valid* license is successfully validated.
+    // - lastValidatedAt: last time validate endpoint was hit for this key.
+    try {
+      await this.prisma.license.update({
+        where: { id: license.id },
+        data: {
+          lastValidatedAt: now,
+          ...(valid && !license.activatedAt ? { activatedAt: now } : {}),
+        },
+      });
+    } catch {
+      // Non-critical bookkeeping: ignore.
+    }
+
     return {
       valid,
       features,
@@ -379,6 +394,8 @@ export class LicenseService {
     seats: number;
     startsAt: Date;
     expiresAt: Date | null;
+    activatedAt?: Date | null;
+    lastValidatedAt?: Date | null;
     organizationId: string;
     organization?: { id: string; name: string; slug: string };
     items: Array<{
@@ -399,6 +416,8 @@ export class LicenseService {
       seats: license.seats,
       startsAt: license.startsAt,
       expiresAt: license.expiresAt,
+      activatedAt: license.activatedAt ?? null,
+      lastValidatedAt: license.lastValidatedAt ?? null,
       organizationId: license.organizationId,
       organization: license.organization
         ? {

@@ -36,6 +36,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         { href: "/modules", label: "Module pricing" },
         { href: "/payments-config", label: "Payment gateways" },
         { href: "/licenses", label: "Licenses" },
+        { href: "/license-generator", label: "License generator" },
         { href: "/license-store", label: "Buy License" },
         { href: "/billing", label: "Payments" },
         { href: "/settings", label: "Settings" },

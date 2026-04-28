@@ -5,13 +5,33 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { api } from "@/lib/api"
 import { useMe } from "@/lib/me"
-import { useMutation } from "@tanstack/react-query"
+import { useMutation, useQuery } from "@tanstack/react-query"
 import { useMemo, useState } from "react"
 
 type KeysResponse = { count: number; keys: string[] }
 type LicensesResponse = {
   count: number
-  licenses: Array<{ id: string; key: string; status: string; organizationId: string; expiresAt: string | null }>
+  licenses: Array<{
+    id: string
+    key: string
+    status: string
+    organizationId: string
+    expiresAt: string | null
+    activatedAt?: string | null
+  }>
+}
+
+type CatalogFeature = {
+  key: string
+  name: string
+  priceCents: number
+  unit: "per_stream" | "flat"
+}
+
+type CustomerOrg = {
+  id: string
+  name: string
+  slug: string
 }
 
 function downloadCsv(filename: string, rows: string[][]) {
@@ -32,20 +52,59 @@ export default function LicenseGeneratorPage() {
   const [count, setCount] = useState(10)
   const [note, setNote] = useState("")
 
-  // Fully-formed license inputs
+  // Fully-formed license inputs (same selection model as Buy License)
   const [organizationId, setOrganizationId] = useState("")
   const [duration, setDuration] = useState<"monthly" | "yearly">("monthly")
   const [seats, setSeats] = useState(1)
-  const [itemsJson, setItemsJson] = useState('[{"featureKey":"rtmp_streams","quantity":1}]')
+  const [perStreamQty, setPerStreamQty] = useState<Record<string, number>>({})
+  const [flatOn, setFlatOn] = useState<Record<string, boolean>>({})
 
-  const parsedItems = useMemo(() => {
-    try {
-      const v = JSON.parse(itemsJson) as Array<{ featureKey: string; quantity: number }>
-      return Array.isArray(v) ? v : null
-    } catch {
-      return null
+  const customersQuery = useQuery({
+    queryKey: ["admin-customers"],
+    enabled: isOwner === true,
+    queryFn: async () => {
+      const res = await api.get<Array<{ id: string; name: string; slug: string }>>("/admin/customers")
+      return res.data
+    },
+  })
+
+  const featuresQuery = useQuery({
+    queryKey: ["features"],
+    enabled: isOwner === true,
+    queryFn: async () => {
+      const response = await api.get<CatalogFeature[]>("/features")
+      return response.data
+    },
+  })
+
+  const displayFeatures = useMemo(() => {
+    const priority = ["rtmp_streams", "srt_streams"]
+    const features = [...(featuresQuery.data ?? [])]
+    return features.sort((a, b) => {
+      const ai = priority.indexOf(a.key)
+      const bi = priority.indexOf(b.key)
+      const aPinned = ai !== -1
+      const bPinned = bi !== -1
+      if (aPinned && bPinned) return ai - bi
+      if (aPinned) return -1
+      if (bPinned) return 1
+      return a.name.localeCompare(b.name)
+    })
+  }, [featuresQuery.data])
+
+  const itemsPayload = useMemo(() => {
+    const features = featuresQuery.data ?? []
+    const items: Array<{ featureKey: string; quantity: number }> = []
+    for (const f of features) {
+      if (f.unit === "per_stream") {
+        const q = Math.max(0, Math.floor(perStreamQty[f.key] ?? 0))
+        if (q > 0) items.push({ featureKey: f.key, quantity: q })
+      } else if (flatOn[f.key]) {
+        items.push({ featureKey: f.key, quantity: 1 })
+      }
     }
-  }, [itemsJson])
+    return items
+  }, [featuresQuery.data, perStreamQty, flatOn])
 
   const genKeys = useMutation({
     mutationFn: async () => {
@@ -62,22 +121,30 @@ export default function LicenseGeneratorPage() {
 
   const genLicenses = useMutation({
     mutationFn: async () => {
-      if (!parsedItems) throw new Error("Invalid items JSON")
+      if (!organizationId.trim()) throw new Error("Organization is required")
+      if (itemsPayload.length === 0) throw new Error("Pick at least one module")
       const res = await api.post<LicensesResponse>("/admin/licenses/generate", {
         count,
         note: note.trim() || undefined,
         organizationId: organizationId.trim(),
         duration,
         seats,
-        items: parsedItems,
+        items: itemsPayload,
         currency: "GHS",
       })
       return res.data
     },
     onSuccess: (data) => {
       downloadCsv(`licenses-${Date.now()}.csv`, [
-        ["id", "key", "status", "organizationId", "expiresAt"],
-        ...data.licenses.map((l) => [l.id, l.key, l.status, l.organizationId, l.expiresAt ?? ""]),
+        ["id", "key", "status", "organizationId", "expiresAt", "activatedAt"],
+        ...data.licenses.map((l) => [
+          l.id,
+          l.key,
+          l.status,
+          l.organizationId,
+          l.expiresAt ?? "",
+          l.activatedAt ?? "",
+        ]),
       ])
     },
   })
@@ -127,8 +194,19 @@ export default function LicenseGeneratorPage() {
         {tab === "licenses" ? (
           <div className="space-y-3">
             <div className="space-y-1">
-              <Label>Organization ID</Label>
-              <Input value={organizationId} onChange={(e) => setOrganizationId(e.target.value)} placeholder="UUID" />
+              <Label>Customer organization</Label>
+              <select
+                className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                value={organizationId}
+                onChange={(e) => setOrganizationId(e.target.value)}
+              >
+                <option value="">Select organization…</option>
+                {(customersQuery.data ?? []).map((org: CustomerOrg) => (
+                  <option key={org.id} value={org.id}>
+                    {org.name} ({org.slug})
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1">
@@ -152,23 +230,87 @@ export default function LicenseGeneratorPage() {
                 />
               </div>
             </div>
-            <div className="space-y-1">
-              <Label>Items JSON</Label>
-              <textarea
-                className="min-h-[120px] w-full rounded-md border bg-background px-3 py-2 text-sm font-mono"
-                value={itemsJson}
-                onChange={(e) => setItemsJson(e.target.value)}
-              />
-              {!parsedItems ? (
-                <p className="text-sm text-destructive">Invalid items JSON</p>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  Format:{" "}
-                  <code className="rounded bg-muted px-1">
-                    {"[{\"featureKey\":\"rtmp_streams\",\"quantity\":1}]"}
-                  </code>
-                </p>
-              )}
+            <div className="ui-surface ui-surface-hover space-y-3 p-4">
+              <div className="flex items-center justify-between">
+                <Label className="text-base font-semibold">Modules</Label>
+                <span className="rounded-full border bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+                  Pick what they need
+                </span>
+              </div>
+              <div className="space-y-2">
+                {displayFeatures.map((f) =>
+                  f.unit === "per_stream" ? (
+                    <div
+                      key={f.key}
+                      className="grid grid-cols-[24px_minmax(0,1fr)_128px_96px] items-center gap-3 rounded-xl border border-border/70 bg-background/70 px-3 py-2.5 shadow-sm"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={(perStreamQty[f.key] ?? 0) > 0}
+                        onChange={(e) =>
+                          setPerStreamQty((prev) => ({
+                            ...prev,
+                            [f.key]: e.target.checked ? Math.max(1, prev[f.key] ?? 1) : 0,
+                          }))
+                        }
+                        className="size-4 accent-primary"
+                      />
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium">{f.name}</p>
+                      </div>
+                      <div className="flex justify-center">
+                        <span className="inline-flex min-w-[92px] justify-center rounded-md bg-muted px-2 py-1 text-xs font-medium text-foreground whitespace-nowrap">
+                          GHS {(f.priceCents / 100).toFixed(2)}
+                        </span>
+                      </div>
+                      <Input
+                        className="h-9 w-24 justify-self-end text-right"
+                        type="number"
+                        min={0}
+                        value={perStreamQty[f.key] ?? 0}
+                        onChange={(e) =>
+                          setPerStreamQty((prev) => ({
+                            ...prev,
+                            [f.key]: Math.max(0, Number.parseInt(e.target.value, 10) || 0),
+                          }))
+                        }
+                      />
+                    </div>
+                  ) : (
+                    <label
+                      key={f.key}
+                      className="grid cursor-pointer grid-cols-[24px_minmax(0,1fr)_128px_96px] items-center gap-3 rounded-xl border border-border/70 bg-background/70 px-3 py-2.5 text-sm shadow-sm"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={!!flatOn[f.key]}
+                        onChange={(e) => setFlatOn((prev) => ({ ...prev, [f.key]: e.target.checked }))}
+                        className="size-4 accent-primary"
+                      />
+                      <div className="min-w-0">
+                        <p className="font-medium">{f.name}</p>
+                      </div>
+                      <div className="flex justify-center">
+                        <span className="inline-flex min-w-[92px] justify-center rounded-md bg-muted px-2 py-1 text-xs font-medium text-foreground whitespace-nowrap">
+                          GHS {(f.priceCents / 100).toFixed(2)}
+                        </span>
+                      </div>
+                      <div className="flex justify-end">
+                        {flatOn[f.key] ? (
+                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                            Added
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">-</span>
+                        )}
+                      </div>
+                    </label>
+                  ),
+                )}
+              </div>
+              {!featuresQuery.isLoading && itemsPayload.length === 0 ? (
+                <p className="text-xs text-muted-foreground">Select at least one module.</p>
+              ) : null}
             </div>
           </div>
         ) : null}
@@ -179,7 +321,10 @@ export default function LicenseGeneratorPage() {
               {genKeys.isPending ? "Generating…" : "Generate + download CSV"}
             </Button>
           ) : (
-            <Button onClick={() => genLicenses.mutate()} disabled={genLicenses.isPending || !parsedItems}>
+            <Button
+              onClick={() => genLicenses.mutate()}
+              disabled={genLicenses.isPending || !organizationId.trim() || itemsPayload.length === 0}
+            >
               {genLicenses.isPending ? "Generating…" : "Generate + download CSV"}
             </Button>
           )}

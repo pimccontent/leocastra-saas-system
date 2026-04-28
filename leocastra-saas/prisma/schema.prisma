@@ -108,6 +108,8 @@ model License {
   status          LicenseStatus  @default(ACTIVE)
   startsAt        DateTime       @default(now())
   expiresAt       DateTime?
+  activatedAt     DateTime?
+  lastValidatedAt DateTime?
   organization    Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   items           LicenseItem[]
   transactions    Transaction[]

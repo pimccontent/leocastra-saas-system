@@ -28,6 +28,8 @@ type License = {
   status: "ACTIVE" | "EXPIRED" | "SUSPENDED" | "REVOKED"
   seats: number
   expiresAt: string | null
+  activatedAt?: string | null
+  lastValidatedAt?: string | null
   organization?: { id: string; name: string; slug: string }
   items: LicenseItemRow[]
 }
@@ -91,8 +93,10 @@ export default function LicensesPage() {
               <TableHead>License key</TableHead>
               {isPlatformOwner && <TableHead>Organization</TableHead>}
               <TableHead>Features</TableHead>
+              {isPlatformOwner && <TableHead>Activated</TableHead>}
               <TableHead>Status</TableHead>
               <TableHead>Expiry</TableHead>
+              {isPlatformOwner && <TableHead>Time left</TableHead>}
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
@@ -108,6 +112,11 @@ export default function LicensesPage() {
                 <TableCell className="max-w-[280px] text-xs text-muted-foreground">
                   {featureSummary(license.items) || "—"}
                 </TableCell>
+                {isPlatformOwner && (
+                  <TableCell className="text-sm">
+                    {license.activatedAt ? new Date(license.activatedAt).toLocaleString() : "Not yet"}
+                  </TableCell>
+                )}
                 <TableCell>
                   <span
                     className={`rounded-full px-2 py-1 text-xs ${
@@ -128,6 +137,20 @@ export default function LicensesPage() {
                     ? new Date(license.expiresAt).toLocaleDateString()
                     : "No expiry"}
                 </TableCell>
+                {isPlatformOwner && (
+                  <TableCell className="text-sm">
+                    {license.expiresAt
+                      ? (() => {
+                          const ms = new Date(license.expiresAt).getTime() - Date.now()
+                          if (ms <= 0) return "Expired"
+                          const hours = Math.floor(ms / 36e5)
+                          const days = Math.floor(hours / 24)
+                          const remH = hours % 24
+                          return days > 0 ? `${days}d ${remH}h` : `${hours}h`
+                        })()
+                      : "—"}
+                  </TableCell>
+                )}
                 <TableCell className="text-right">
                   <div className="flex flex-wrap justify-end gap-1">
                     {license.status !== "ACTIVE" && license.status !== "REVOKED" && (
@@ -180,7 +203,7 @@ export default function LicensesPage() {
             {!licensesQuery.isLoading && licensesQuery.data?.length === 0 && (
               <TableRow>
                 <TableCell
-                  colSpan={isPlatformOwner ? 6 : 5}
+                  colSpan={isPlatformOwner ? 9 : 5}
                   className="text-center text-muted-foreground"
                 >
                   No licenses found.
