@@ -30,6 +30,7 @@ Usage:
     [--web-domain saas.example.com] \
     [--single-domain saas.example.com] \
     [--no-https] [--caddy-email you@example.com] \
+    [--show-superadmin-credentials] \
     [--repo URL] [--dir /opt/leocastra-saas-system] \
     [--superadmin-email you@example.com] [--superadmin-password '...'] \
     [--backend-port 3001] [--web-port 3000]
@@ -48,6 +49,7 @@ WEB_DOMAIN=""
 SINGLE_DOMAIN=""
 NO_HTTPS="false"
 CADDY_EMAIL="${CADDY_EMAIL:-}"
+SHOW_SUPERADMIN_CREDENTIALS="false"
 REPO_URL="$REPO_DEFAULT"
 INSTALL_DIR="$INSTALL_DIR_DEFAULT"
 SUPERADMIN_EMAIL="${SUPERADMIN_EMAIL:-superadmin@leocastra.local}"
@@ -62,6 +64,7 @@ while [[ $# -gt 0 ]]; do
     --single-domain) SINGLE_DOMAIN="${2:-}"; shift 2 ;;
     --no-https) NO_HTTPS="true"; shift 1 ;;
     --caddy-email) CADDY_EMAIL="${2:-}"; shift 2 ;;
+    --show-superadmin-credentials) SHOW_SUPERADMIN_CREDENTIALS="true"; shift 1 ;;
     --repo) REPO_URL="${2:-}"; shift 2 ;;
     --dir) INSTALL_DIR="${2:-}"; shift 2 ;;
     --superadmin-email) SUPERADMIN_EMAIL="${2:-}"; shift 2 ;;
@@ -273,6 +276,27 @@ if [[ "${NO_HTTPS}" != "true" ]]; then
   configure_firewall_if_ufw
 fi
 
+print_superadmin_credentials_if_requested() {
+  if [[ "${SHOW_SUPERADMIN_CREDENTIALS}" != "true" ]]; then
+    return 0
+  fi
+  if [[ ! -f ".env.saas-live" ]]; then
+    echo "WARN: .env.saas-live not found; cannot print superadmin credentials." >&2
+    return 0
+  fi
+
+  local email password
+  email="$(grep -E '^SUPERADMIN_EMAIL=' .env.saas-live | head -n 1 | cut -d= -f2- || true)"
+  password="$(grep -E '^SUPERADMIN_PASSWORD=' .env.saas-live | head -n 1 | cut -d= -f2- || true)"
+
+  echo
+  echo "Superadmin credentials (from ${INSTALL_DIR}/.env.saas-live):"
+  echo "- Email: ${email:-<missing>}"
+  echo "- Password: ${password:-<missing>}"
+  echo
+  echo "Security note: this password was printed because you passed --show-superadmin-credentials."
+}
+
 echo
 echo "Install complete."
 echo "- Web upstream (localhost): http://127.0.0.1:${WEB_PORT}"
@@ -294,7 +318,11 @@ echo
 echo "Next steps:"
 echo "- Ensure Cloudflare DNS is set to DNS-only (no orange proxy) during first TLS issuance, or allow HTTP-01."
 echo "- Point your live LeoCastra backend LICENSE_VALIDATE_URL to the URL above."
+
 echo
-echo "Superadmin login (from .env.saas-live):"
-echo "- Email: ${SUPERADMIN_EMAIL}"
+echo "Superadmin login:"
+echo "- Email: (saved in ${INSTALL_DIR}/.env.saas-live)"
 echo "- Password: (saved in ${INSTALL_DIR}/.env.saas-live)"
+echo "Tip: rerun installer with --show-superadmin-credentials to print them."
+
+print_superadmin_credentials_if_requested
