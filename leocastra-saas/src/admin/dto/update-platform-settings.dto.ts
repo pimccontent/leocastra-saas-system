@@ -48,6 +48,10 @@ export class UpdatePlatformSettingsDto {
 
   @IsOptional()
   @IsString()
+  paystackCallbackUrl?: string;
+
+  @IsOptional()
+  @IsString()
   paystackWebhookSecret?: string;
 
   @IsOptional()

@@ -1,10 +1,14 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { PlatformSettingsService } from '../platform-settings/platform-settings.service';
 import { UpdatePlatformSettingsDto } from './dto/update-platform-settings.dto';
 import { AdminUpdateFeatureDto } from './dto/admin-update-feature.dto';
 import { UpdateTransactionDto } from './dto/update-transaction.dto';
+import { GenerateLicenseKeysDto } from './dto/generate-license-keys.dto';
+import { GenerateLicensesDto } from './dto/generate-licenses.dto';
+import { LicenseService } from '../license/license.service';
 
 const REMOVED_FEATURE_KEYS = new Set([
   'abr',
@@ -19,6 +23,7 @@ export class AdminService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly platformSettings: PlatformSettingsService,
+    private readonly licenseService: LicenseService,
   ) {}
 
   async getOverview(userId: string) {
@@ -193,6 +198,7 @@ export class AdminService {
       },
       paystack: {
         publicKey: row.paystackPublicKey,
+        callbackUrl: row.paystackCallbackUrl,
         secretKeyConfigured: configured(row.paystackSecretKey),
         webhookSecretConfigured: configured(row.paystackWebhookSecret),
       },
@@ -249,6 +255,9 @@ export class AdminService {
     if (dto.paystackSecretKey !== undefined) {
       data.paystackSecretKey = dto.paystackSecretKey.trim() || null;
     }
+    if (dto.paystackCallbackUrl !== undefined) {
+      data.paystackCallbackUrl = dto.paystackCallbackUrl.trim() || null;
+    }
     if (dto.paystackWebhookSecret !== undefined) {
       data.paystackWebhookSecret = dto.paystackWebhookSecret.trim() || null;
     }
@@ -297,6 +306,66 @@ export class AdminService {
     });
   }
 
+  async generateLicenseKeys(userId: string, dto: GenerateLicenseKeysDto) {
+    await this.assertSuperAdmin(userId);
+    const note = dto.note?.trim() || null;
+
+    const keys: string[] = [];
+    for (let i = 0; i < dto.count; i += 1) {
+      keys.push(await this.generateUniquePoolKey());
+    }
+
+    await this.prisma.licenseKeyPool.createMany({
+      data: keys.map((key) => ({
+        key,
+        note,
+        createdById: userId,
+      })),
+    });
+
+    return {
+      count: keys.length,
+      keys,
+    };
+  }
+
+  async generateLicenses(userId: string, dto: GenerateLicensesDto) {
+    await this.assertSuperAdmin(userId);
+    const note = dto.note?.trim() || undefined;
+
+    const created: Array<{
+      id: string;
+      key: string;
+      status: string;
+      organizationId: string;
+      expiresAt: Date | null;
+      note?: string;
+    }> = [];
+    for (let i = 0; i < dto.count; i += 1) {
+      const license = await this.licenseService.issueLicenseAfterPayment({
+        organizationId: dto.organizationId,
+        items: dto.items,
+        duration: dto.duration,
+        currency: dto.currency,
+        seats: dto.seats,
+        expiresAt: dto.expiresAt,
+      });
+      created.push({
+        id: license.id,
+        key: license.key,
+        status: license.status,
+        organizationId: license.organizationId,
+        expiresAt: license.expiresAt,
+        note,
+      });
+    }
+
+    return {
+      count: created.length,
+      licenses: created,
+    };
+  }
+
   async assertSuperAdmin(userId: string): Promise<void> {
     const superAdminEmail = process.env.SUPERADMIN_EMAIL?.trim().toLowerCase();
     if (!superAdminEmail) {
@@ -311,5 +380,19 @@ export class AdminService {
     if (!user || user.email.toLowerCase() !== superAdminEmail) {
       throw new ForbiddenException('Owner access required');
     }
+  }
+
+  private async generateUniquePoolKey(): Promise<string> {
+    for (let i = 0; i < 5; i += 1) {
+      const key = `LC-${randomBytes(12).toString('hex').toUpperCase()}`;
+      const exists = await this.prisma.licenseKeyPool.findUnique({
+        where: { key },
+        select: { id: true },
+      });
+      if (!exists) {
+        return key;
+      }
+    }
+    throw new Error('Could not generate unique license key');
   }
 }

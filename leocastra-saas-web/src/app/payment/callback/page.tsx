@@ -3,9 +3,9 @@
 import { Button } from "@/components/ui/button"
 import { AUTH_TOKEN_KEY } from "@/lib/auth"
 import { useRouter, useSearchParams } from "next/navigation"
-import { useEffect, useMemo } from "react"
+import { Suspense, useEffect, useMemo } from "react"
 
-export default function PaymentCallbackPage() {
+function PaymentCallbackInner() {
   const router = useRouter()
   const params = useSearchParams()
 
@@ -45,6 +45,14 @@ export default function PaymentCallbackPage() {
         <span className="font-mono"> /api/payments/webhook/paystack</span>.
       </p>
     </div>
+  )
+}
+
+export default function PaymentCallbackPage() {
+  return (
+    <Suspense fallback={<div className="mx-auto w-full max-w-xl p-6 text-sm text-muted-foreground">Loading…</div>}>
+      <PaymentCallbackInner />
+    </Suspense>
   )
 }
 

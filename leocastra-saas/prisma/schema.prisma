@@ -156,6 +156,7 @@ model PlatformSettings {
   seoKeywords            Json?
   paystackPublicKey      String?
   paystackSecretKey      String?
+  paystackCallbackUrl    String?
   paystackWebhookSecret  String?
   binancePayApiKey       String?
   binancePaySecretKey    String?
@@ -164,6 +165,17 @@ model PlatformSettings {
   billingBaseCurrency    String   @default("USD")
   exchangeRates          Json?
   updatedAt              DateTime @updatedAt
+}
+
+model LicenseKeyPool {
+  id          String   @id @default(uuid()) @db.Uuid
+  key         String   @unique
+  note        String?
+  createdById String?  @db.Uuid
+  createdAt   DateTime @default(now())
+  claimedAt   DateTime?
+
+  @@index([createdAt])
 }
 
 model Transaction {

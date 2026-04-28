@@ -38,7 +38,9 @@ export class PaystackProvider implements PaymentProvider {
       };
     }
 
-    const callbackUrl = process.env.PAYSTACK_CALLBACK_URL?.trim();
+    const callbackUrl =
+      settings.paystackCallbackUrl?.trim() ||
+      process.env.PAYSTACK_CALLBACK_URL?.trim();
     const res = await fetch('https://api.paystack.co/transaction/initialize', {
       method: 'POST',
       headers: {
@@ -95,11 +97,21 @@ export class PaystackProvider implements PaymentProvider {
   ): Promise<HandleWebhookResult> {
     await this.validateSignature(payload, signature);
     const body = (payload ?? {}) as Record<string, unknown>;
+    const data =
+      body.data && typeof body.data === 'object' && !Array.isArray(body.data)
+        ? (body.data as Record<string, unknown>)
+        : undefined;
+
+    // Paystack typically sends: { event: "...", data: { reference, status, ... } }
     const providerRef =
+      (data?.reference as string | undefined) ??
       (body.reference as string | undefined) ??
       (body.providerRef as string | undefined) ??
       '';
-    const status = (body.status as string | undefined)?.toLowerCase();
+    const statusRaw =
+      (data?.status as string | undefined) ??
+      (body.status as string | undefined);
+    const status = statusRaw?.toLowerCase();
     return {
       successful: status === 'success' || status === 'succeeded',
       providerRef,

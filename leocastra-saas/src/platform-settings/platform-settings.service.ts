@@ -13,6 +13,7 @@ export type PlatformSettingsRecord = {
   seoKeywords: Prisma.JsonValue | null;
   paystackPublicKey: string | null;
   paystackSecretKey: string | null;
+  paystackCallbackUrl: string | null;
   paystackWebhookSecret: string | null;
   binancePayApiKey: string | null;
   binancePaySecretKey: string | null;

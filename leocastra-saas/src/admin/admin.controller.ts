@@ -1,10 +1,12 @@
-import { Body, Controller, Delete, Get, Param, Patch } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { CurrentUserPayload } from '../auth/decorators/current-user.decorator';
 import { AdminService } from './admin.service';
 import { UpdatePlatformSettingsDto } from './dto/update-platform-settings.dto';
 import { AdminUpdateFeatureDto } from './dto/admin-update-feature.dto';
 import { UpdateTransactionDto } from './dto/update-transaction.dto';
+import { GenerateLicenseKeysDto } from './dto/generate-license-keys.dto';
+import { GenerateLicensesDto } from './dto/generate-licenses.dto';
 
 @Controller('admin')
 export class AdminController {
@@ -67,5 +69,21 @@ export class AdminController {
     @Body() dto: AdminUpdateFeatureDto,
   ) {
     return this.adminService.updateCatalogFeature(currentUser.userId, key, dto);
+  }
+
+  @Post('licenses/generate-keys')
+  generateLicenseKeys(
+    @CurrentUser() currentUser: CurrentUserPayload,
+    @Body() dto: GenerateLicenseKeysDto,
+  ) {
+    return this.adminService.generateLicenseKeys(currentUser.userId, dto);
+  }
+
+  @Post('licenses/generate')
+  generateLicenses(
+    @CurrentUser() currentUser: CurrentUserPayload,
+    @Body() dto: GenerateLicensesDto,
+  ) {
+    return this.adminService.generateLicenses(currentUser.userId, dto);
   }
 }

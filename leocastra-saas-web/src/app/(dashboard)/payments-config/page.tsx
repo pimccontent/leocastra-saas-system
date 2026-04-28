@@ -15,6 +15,7 @@ type PlatformSettingsResponse = {
   }
   paystack: {
     publicKey: string | null
+    callbackUrl: string | null
     secretKeyConfigured: boolean
     webhookSecretConfigured: boolean
   }
@@ -31,6 +32,7 @@ type FormState = {
   exchangeRatesJson: string
   paystackPublicKey: string
   paystackSecretKey: string
+  paystackCallbackUrl: string
   paystackWebhookSecret: string
   binancePayApiKey: string
   binancePaySecretKey: string
@@ -43,6 +45,7 @@ const emptyForm: FormState = {
   exchangeRatesJson: "{\n  \"USD\": 1,\n  \"GHS\": 15\n}",
   paystackPublicKey: "",
   paystackSecretKey: "",
+  paystackCallbackUrl: "",
   paystackWebhookSecret: "",
   binancePayApiKey: "",
   binancePaySecretKey: "",
@@ -74,6 +77,7 @@ export default function PaymentsConfigPage() {
       billingBaseCurrency: d.billing.baseCurrency ?? "USD",
       exchangeRatesJson: JSON.stringify(d.billing.exchangeRates ?? { USD: 1 }, null, 2),
       paystackPublicKey: d.paystack.publicKey ?? "",
+      paystackCallbackUrl: d.paystack.callbackUrl ?? "",
       binancePayApiKey: d.binancePay.apiKey ?? "",
       binancePayMerchantId: d.binancePay.merchantId ?? "",
     }))
@@ -107,6 +111,9 @@ export default function PaymentsConfigPage() {
 
   const ps = settingsQuery.data?.paystack
   const bp = settingsQuery.data?.binancePay
+  const origin = typeof window === "undefined" ? "" : window.location.origin
+  const webhookUrl = origin ? `${origin}/api/payments/webhook/paystack` : ""
+  const recommendedCallbackUrl = origin ? `${origin}/payment/callback` : ""
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -169,6 +176,8 @@ export default function PaymentsConfigPage() {
           }
           if (form.paystackPublicKey.trim()) payload.paystackPublicKey = form.paystackPublicKey.trim()
           if (form.paystackSecretKey.trim()) payload.paystackSecretKey = form.paystackSecretKey.trim()
+          if (form.paystackCallbackUrl.trim())
+            payload.paystackCallbackUrl = form.paystackCallbackUrl.trim()
           if (form.paystackWebhookSecret.trim())
             payload.paystackWebhookSecret = form.paystackWebhookSecret.trim()
           if (form.binancePayApiKey.trim()) payload.binancePayApiKey = form.binancePayApiKey.trim()
@@ -190,6 +199,22 @@ export default function PaymentsConfigPage() {
             {ps?.secretKeyConfigured ? " Secret key is on file." : " Secret key not set."}
             {ps?.webhookSecretConfigured ? " Webhook HMAC secret is on file." : ""}
           </p>
+          {webhookUrl ? (
+            <div className="rounded-md border bg-muted/40 p-3 text-xs">
+              <p className="font-medium">Webhook URL (set in Paystack dashboard)</p>
+              <div className="mt-1 flex items-center justify-between gap-2">
+                <code className="truncate">{webhookUrl}</code>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => navigator.clipboard.writeText(webhookUrl)}
+                >
+                  Copy
+                </Button>
+              </div>
+            </div>
+          ) : null}
           <div className="space-y-1">
             <Label htmlFor="pk">Public key</Label>
             <Input
@@ -210,6 +235,21 @@ export default function PaymentsConfigPage() {
               placeholder={ps?.secretKeyConfigured ? "•••••••• (enter to rotate)" : "sk_live_..."}
               autoComplete="new-password"
             />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="pcb">Callback URL</Label>
+            <Input
+              id="pcb"
+              value={form.paystackCallbackUrl}
+              onChange={(e) => setForm((p) => ({ ...p, paystackCallbackUrl: e.target.value }))}
+              placeholder={recommendedCallbackUrl || "https://your-domain.com/payment/callback"}
+              autoComplete="off"
+            />
+            {recommendedCallbackUrl ? (
+              <p className="text-xs text-muted-foreground">
+                Recommended: <code className="rounded bg-muted px-1">{recommendedCallbackUrl}</code>
+              </p>
+            ) : null}
           </div>
           <div className="space-y-1">
             <Label htmlFor="pwh">Webhook secret (optional)</Label>
