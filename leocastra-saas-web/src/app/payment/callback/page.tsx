@@ -2,7 +2,6 @@
 
 import { Button } from "@/components/ui/button"
 import { AUTH_TOKEN_KEY } from "@/lib/auth"
-import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useEffect, useMemo } from "react"
 
@@ -35,11 +34,9 @@ export default function PaymentCallbackPage() {
       </div>
 
       <div className="flex gap-3">
-        <Button asChild>
-          <Link href="/billing">View billing</Link>
-        </Button>
-        <Button variant="outline" asChild>
-          <Link href="/licenses">View licenses</Link>
+        <Button onClick={() => router.push("/billing")}>View billing</Button>
+        <Button variant="outline" onClick={() => router.push("/licenses")}>
+          View licenses
         </Button>
       </div>
 
